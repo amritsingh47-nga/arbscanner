@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.csv
+credentials.json
+credentials.json
+venv/
+Database/
