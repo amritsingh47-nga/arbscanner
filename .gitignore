@@ -1,7 +1,15 @@
+# Environments
 venv/
+env/
 __pycache__/
-*.csv
-credentials.json
-credentials.json
-venv/
-Database/
+
+# Browser Profiles (Privacy)
+bot_profile_v2/
+bot_profile_hijack/
+
+# Local Caches
+Database/api_cache.json
+product_urls.txt
+
+# API Keys / Secrets (Future-proofing)
+.env
