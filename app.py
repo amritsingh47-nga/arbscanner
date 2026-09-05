@@ -1,17 +1,20 @@
-import streamlit as st
-import pandas as pd
 import os
 
-st.set_page_config(
-    page_title="Arbitrage Command Center",
-    layout="wide"
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(page_title="Arbitrage Command Center", layout="wide")
+
+DB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "Database", "Deep_Data_Database.csv"
 )
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Database', 'Deep_Data_Database.csv')
-
 st.title("Amazon Arbitrage Command Center")
-st.markdown("Real-time lead scoring, profit calculations, and product inventory tracker.")
+st.markdown(
+    "Real-time lead scoring, profit calculations, and product inventory tracker."
+)
 st.markdown("---")
+
 
 def load_data():
     if os.path.exists(DB_PATH):
@@ -20,21 +23,25 @@ def load_data():
         return df
     return pd.DataFrame()
 
+
 df = load_data()
 
 if df.empty:
     st.warning("No scanned leads found yet! Run a scan using main.py to populate data.")
 else:
     st.sidebar.header("Filter Controls")
-    status_filter = st.sidebar.selectbox("Lead Status Filter", ["All", "WINNING_LEAD", "FAIL", "NOT_FOUND", "MISSING_UPC"])
-    
+    status_filter = st.sidebar.selectbox(
+        "Lead Status Filter",
+        ["All", "WINNING_LEAD", "FAIL", "NOT_FOUND", "MISSING_UPC"],
+    )
+
     filtered_df = df.copy()
     if status_filter != "All":
-        filtered_df = filtered_df[filtered_df['Lead Status'] == status_filter]
+        filtered_df = filtered_df[filtered_df["Lead Status"] == status_filter]
 
     total_leads = len(df)
-    winning_leads = len(df[df['Lead Status'] == 'WINNING_LEAD'])
-    
+    winning_leads = len(df[df["Lead Status"] == "WINNING_LEAD"])
+
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Scanned", str(total_leads))
     col2.metric("Winning Leads", str(winning_leads))
@@ -46,17 +53,18 @@ else:
         st.info("No items match the selected filter.")
     else:
         for index, row in filtered_df.iterrows():
-            title = str(row.get('Product Title', 'Unknown Title'))
-            amz_link = str(row.get('Amz Link', ''))
-            src_link = str(row.get('Source Link', ''))
-            
+            title = str(row.get("Product Title", "Unknown Title"))
+            amz_link = str(row.get("Amz Link", ""))
+            src_link = str(row.get("Source Link", ""))
+
             # Product title as clickable link to Amazon if valid
             if amz_link and amz_link != "N/A" and amz_link.startswith("http"):
                 title_html = f'<a href="{amz_link}" target="_blank" style="color: #58a6ff; text-decoration: none;">{title} ?</a>'
             else:
                 title_html = f'<span style="color: #58a6ff;">{title}</span>'
 
-            st.markdown(f"""
+            st.markdown(
+                f"""
             <div style="background-color: #161b22; padding: 20px; border-radius: 10px; border: 1px solid #30363d; margin-bottom: 20px; word-break: break-word;">
                 <h3 style="margin: 0 0 10px 0;">{title_html}</h3>
                 <p style="color: #8b949e; font-size: 14px; margin-bottom: 15px;">
@@ -80,11 +88,16 @@ else:
                     <div><b>Rating:</b> {row.get('Rating', 'N/A')} ({row.get('Reviews', 'N/A')} reviews)</div>
                     <div><b>Break-Even:</b> {row.get('Break-Even', 'N/A')}</div>
                 </div>
-            """, unsafe_allow_html=True)
+            """,
+                unsafe_allow_html=True,
+            )
 
             if src_link and src_link != "N/A" and src_link.startswith("http"):
-                st.markdown(f'<a href="{src_link}" target="_blank" style="margin-right: 15px; color: #3399ff; font-size: 13px;">Open Source Supplier Page ?</a>', unsafe_allow_html=True)
-            
+                st.markdown(
+                    f'<a href="{src_link}" target="_blank" style="margin-right: 15px; color: #3399ff; font-size: 13px;">Open Source Supplier Page ?</a>',
+                    unsafe_allow_html=True,
+                )
+
             st.markdown("</div>", unsafe_allow_html=True)
 
     if st.button("Refresh Data"):

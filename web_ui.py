@@ -1,11 +1,14 @@
-from flask import Flask, render_template_string
-import pandas as pd
-import urllib.parse
 import os
 import re
+import urllib.parse
+
+import pandas as pd
+from flask import Flask, render_template_string
 
 app = Flask(__name__)
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Database', 'Deep_Data_Database.csv')
+DB_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "Database", "Deep_Data_Database.csv"
+)
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -325,68 +328,96 @@ HTML_TEMPLATE = """
 </html>
 """
 
+
 def extract_raw_url(url_string):
     """Safely extracts a clean URL if it was wrapped in HTML"""
-    if pd.isna(url_string): return ""
+    if pd.isna(url_string):
+        return ""
     val = str(url_string).strip()
-    if val.lower() in ['n/a', 'not found', 'none', 'nan', '']: return ""
-    
+    if val.lower() in ["n/a", "not found", "none", "nan", ""]:
+        return ""
+
     match = re.search(r'href=[\'"]?([^\'" >]+)', val)
-    if match: return match.group(1)
-    
-    if not val.startswith('http'):
-        val = 'https://' + val
+    if match:
+        return match.group(1)
+
+    if not val.startswith("http"):
+        val = "https://" + val
     return val
 
-@app.route('/')
+
+@app.route("/")
 def index():
     if os.path.exists(DB_PATH):
         try:
             df = pd.read_csv(DB_PATH)
-            df = df.fillna('N/A')
-            
+            df = df.fillna("N/A")
+
             # Smart URL Engine
             for i, row in df.iterrows():
-                
+
                 # 1. Handle Source Links
-                source_link = extract_raw_url(row.get('Source Link', ''))
+                source_link = extract_raw_url(row.get("Source Link", ""))
                 if source_link:
-                    df.at[i, 'Clean Source'] = source_link
+                    df.at[i, "Clean Source"] = source_link
                 else:
-                    df.at[i, 'Clean Source'] = "#" # Fallback blank link
-                
+                    df.at[i, "Clean Source"] = "#"  # Fallback blank link
+
                 # 2. Handle Amazon Links (Extract or Generate Search Query)
-                amz_link = extract_raw_url(row.get('Amz Link', ''))
+                amz_link = extract_raw_url(row.get("Amz Link", ""))
                 if amz_link:
-                    df.at[i, 'Clean Amz'] = amz_link
+                    df.at[i, "Clean Amz"] = amz_link
                 else:
                     # If Amazon Link wasn't found, generate an automatic search link based on the product title!
-                    title = str(row.get('Product Title', ''))
-                    if title and title.lower() not in ['n/a', 'nan', 'none', '']:
-                        clean_query = urllib.parse.quote(title[:50]) # Use first 50 chars of title
-                        df.at[i, 'Clean Amz'] = f"https://www.amazon.com/s?k={clean_query}"
+                    title = str(row.get("Product Title", ""))
+                    if title and title.lower() not in ["n/a", "nan", "none", ""]:
+                        clean_query = urllib.parse.quote(
+                            title[:50]
+                        )  # Use first 50 chars of title
+                        df.at[i, "Clean Amz"] = (
+                            f"https://www.amazon.com/s?k={clean_query}"
+                        )
                     else:
-                        df.at[i, 'Clean Amz'] = "https://www.amazon.com/"
+                        df.at[i, "Clean Amz"] = "https://www.amazon.com/"
 
             # Ensure newest first natively
-            if 'Date Scanned' in df.columns:
-                df = df.sort_values(by='Date Scanned', ascending=False)
-                
-            data = df.to_dict(orient='records')
+            if "Date Scanned" in df.columns:
+                df = df.sort_values(by="Date Scanned", ascending=False)
+
+            data = df.to_dict(orient="records")
             total_leads = len(df)
-            unique_cats = df['Category'].nunique() if 'Category' in df.columns and len(df) > 0 else 0
-            winning_leads = len(df[df['Lead Status'] == 'WINNING_LEAD']) if 'Lead Status' in df.columns else 0
+            unique_cats = (
+                df["Category"].nunique()
+                if "Category" in df.columns and len(df) > 0
+                else 0
+            )
+            winning_leads = (
+                len(df[df["Lead Status"] == "WINNING_LEAD"])
+                if "Lead Status" in df.columns
+                else 0
+            )
         except Exception as e:
             print(f"Error loading DB: {e}")
             data, total_leads, unique_cats, winning_leads = [], 0, 0, 0
     else:
         data, total_leads, unique_cats, winning_leads = [], 0, 0, 0
-        
-    return render_template_string(HTML_TEMPLATE, data=data, total_leads=total_leads, unique_cats=unique_cats, winning_leads=winning_leads, str=str)
 
-if __name__ == '__main__':
-    print("\n[*] PRO Web UI is active! Open your browser and go to: http://127.0.0.1:5000\n")
+    return render_template_string(
+        HTML_TEMPLATE,
+        data=data,
+        total_leads=total_leads,
+        unique_cats=unique_cats,
+        winning_leads=winning_leads,
+        str=str,
+    )
+
+
+if __name__ == "__main__":
+    print(
+        "\n[*] PRO Web UI is active! Open your browser and go to: http://127.0.0.1:5000\n"
+    )
     import logging
-    log = logging.getLogger('werkzeug')
+
+    log = logging.getLogger("werkzeug")
     log.setLevel(logging.ERROR)
-    app.run(host='127.0.0.1', port=5000, debug=False)
+    app.run(host="127.0.0.1", port=5000, debug=False)

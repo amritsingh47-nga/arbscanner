@@ -13,3 +13,4 @@ product_urls.txt
 
 # API Keys / Secrets (Future-proofing)
 .env
+credentials.json
