@@ -28,9 +28,8 @@ CACHE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "Database", "api_cache.json"
 )
 
-
 # ==========================================
-# UNIVERSAL DATABASE LOGGER
+# UNIVERSAL DATABASE LOGGER (20-COLUMN SMART PADDING)
 # ==========================================
 def log_universal_csv(row_data_list):
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -40,31 +39,101 @@ def log_universal_csv(row_data_list):
         if not file_exists:
             writer.writerow(
                 [
-                    "Lead Status",
-                    "Date Scanned",
-                    "Category",
-                    "Product Title",
-                    "Description",
-                    "Weight",
-                    "UPC",
-                    "Buy Cost",
-                    "Amz Price",
-                    "Net Profit",
-                    "Margin %",
-                    "ROI %",
-                    "Break-Even",
-                    "Monthly Sales",
-                    "Reviews",
-                    "Rating",
-                    "Amz Link",
-                    "Source Link",
+                    "Lead Status", "Date Scanned", "Category", "Product Title", "Description",
+                    "Weight", "BSR", "UPC", "Buy Cost", "Amz Price", "FBA Fee", "Net Profit",
+                    "Margin %", "ROI %", "Break-Even", "Monthly Sales", "Reviews", "Rating",
+                    "Amz Link", "Source Link",
                 ]
             )
         writer.writerow(row_data_list)
-        print(
-            "    [+] Scan complete. Data saved locally to Database/Deep_Data_Database.csv"
-        )
+        print("    [+] Scan complete. Data saved locally to Database/Deep_Data_Database.csv")
 
+# ==========================================
+# MARKET INTEL CALCULATORS
+# ==========================================
+def calculate_fba_fee(price, weight_str, category):
+    try:
+        # Dynamic Referral Fee (8% Electronics/Camera, 15% Standard)
+        cat_lower = str(category).lower()
+        ref_rate = 0.08 if any(x in cat_lower for x in ["electronic", "computer", "camera", "cell phone"]) else 0.15
+        referral_fee = price * ref_rate
+
+        # Parse Weight
+        weight_val = 1.0
+        match = re.search(r"(\d+(?:\.\d+)?)", str(weight_str))
+        if match:
+            weight_val = float(match.group(1))
+
+        # Tiered Pick & Pack Fulfillment Fee
+        if weight_val <= 0.5: fulfillment_fee = 3.15
+        elif weight_val <= 1.0: fulfillment_fee = 3.78
+        elif weight_val <= 2.0: fulfillment_fee = 4.75
+        elif weight_val <= 3.0: fulfillment_fee = 5.69
+        elif weight_val <= 20.0: fulfillment_fee = 5.69 + ((weight_val - 3.0) * 0.38)
+        else: fulfillment_fee = 10.50
+
+        return round(referral_fee + fulfillment_fee, 2)
+    except Exception:
+        return 5.50
+
+def load_cache():
+    if os.path.exists(CACHE_PATH):
+        try:
+            with open(CACHE_PATH, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_cache(cache_data):
+    with open(CACHE_PATH, "w") as f:
+        json.dump(cache_data, f, indent=4)
+
+def check_rapid_api(upc):
+    if not RAPID_API_KEY:
+        return 0.0, "N/A", 0, "N/A", "Unknown", "N/A"
+    cache = load_cache()
+    if upc in cache:
+        c = cache[upc]
+        return c["amazon_price"], c["amz_link"], c["reviews"], c["stars"], c["sales_vol"], c.get("bsr", "N/A")
+
+    url = "https://real-time-amazon-data.p.rapidapi.com/search"
+    querystring = {
+        "query": upc,
+        "page": "1",
+        "country": "US",
+        "sort_by": "RELEVANCE",
+        "product_condition": "NEW",
+    }
+    headers = {
+        "X-RapidAPI-Key": RAPID_API_KEY,
+        "X-RapidAPI-Host": "real-time-amazon-data.p.rapidapi.com",
+    }
+
+    try:
+        response = requests.get(url, headers=headers, params=querystring, timeout=15)
+        data = response.json()
+        if "data" in data and "products" in data["data"] and len(data["data"]["products"]) > 0:
+            p = data["data"]["products"][0]
+            price_str = p.get("product_price", "")
+            if price_str:
+                amazon_price = float(price_str.replace("$", "").replace(",", ""))
+                amz_link = p.get("product_url", f"https://www.amazon.com/dp/{p.get('asin', '')}")
+                bsr = "#1 Best Seller" if p.get("best_seller") else "N/A"
+                
+                cache[upc] = {
+                    "amazon_price": amazon_price,
+                    "amz_link": amz_link,
+                    "reviews": p.get("product_num_ratings", 0),
+                    "stars": p.get("product_star_rating", "N/A"),
+                    "sales_vol": p.get("sales_volume", "Unknown"),
+                    "bsr": bsr,
+                }
+                save_cache(cache)
+                return amazon_price, amz_link, p.get("product_num_ratings", 0), p.get("product_star_rating", "N/A"), p.get("sales_volume", "Unknown"), bsr
+    except:
+        pass
+    return 0.0, "N/A", 0, "N/A", "Unknown", "N/A"
 
 # ==========================================
 # STEALTH WHOLESALE ENGINES
@@ -89,12 +158,9 @@ def scrape_alibaba(html_code):
         lead_time = "Check Page"
     return {"Buy Cost": price, "MOQ": moq, "Lead Time": lead_time}
 
-
 def scrape_dhgate(html_code):
     try:
-        prices = re.findall(
-            r'property="og:price:amount"\s*content="([\d\.]+)"', html_code
-        )
+        prices = re.findall(r'property="og:price:amount"\s*content="([\d\.]+)"', html_code)
         if not prices:
             prices = re.findall(r'itemprop="price"\s*content="([\d\.]+)"', html_code)
         if not prices:
@@ -115,7 +181,6 @@ def scrape_dhgate(html_code):
         moq = "Check Page"
     return {"Buy Cost": price, "MOQ": moq, "Lead Time": "Check Page (DHGate Varies)"}
 
-
 def scrape_made_in_china(html_code):
     try:
         prices = re.findall(r'"price"\s*:\s*"?([\d\.]+)"?', html_code)
@@ -131,10 +196,6 @@ def scrape_made_in_china(html_code):
         moq = "Check Page"
     return {"Buy Cost": price, "MOQ": moq, "Lead Time": "Check Page (MIC Varies)"}
 
-
-# ==========================================
-# THE DETACHED HIJACK ENGINE (ULTIMATE STEALTH)
-# ==========================================
 def fetch_with_playwright(url):
     print("    [*] Booting Detached Chrome (Bypassing CDP Detection)...")
     profile_path = os.path.join(os.getcwd(), "bot_profile_hijack")
@@ -166,9 +227,7 @@ def fetch_with_playwright(url):
             except:
                 pass
 
-            input(
-                "    [?] BROWSER OPEN: Handle security check if needed. Press ENTER once price is visible..."
-            )
+            input("    [?] BROWSER OPEN: Handle security check if needed. Press ENTER once price is visible...")
 
             try:
                 html = page.content()
@@ -182,7 +241,6 @@ def fetch_with_playwright(url):
         except Exception as e:
             print(f"    [!] Detached Browser Connection Failed: {e}")
             return ""
-
 
 def fetch_with_curl(url):
     try:
@@ -202,7 +260,6 @@ def fetch_with_curl(url):
         print(f"    [!] Network Error: {e}")
         return ""
 
-
 def run_wholesale_scraper(url):
     print("    [*] Routing to Stealth Wholesale Engine...")
 
@@ -211,7 +268,6 @@ def run_wholesale_scraper(url):
             **scrape_alibaba(fetch_with_playwright(url)),
             "Supplier Type": "ALIBABA",
         }
-
     elif "dhgate.com" in url or "made-in-china.com" in url:
         html_code = fetch_with_curl(url)
         supplier = "DHGATE" if "dhgate.com" in url else "MADE_IN_CHINA"
@@ -239,7 +295,6 @@ def run_wholesale_scraper(url):
                     else scrape_made_in_china(html_raw)
                 )
             result = {**data, "Supplier Type": supplier}
-
     else:
         result = {
             "Buy Cost": "N/A",
@@ -249,32 +304,15 @@ def run_wholesale_scraper(url):
         }
 
     print(f"    [+] Buy Cost: {result['Buy Cost']} | MOQ: {result['MOQ']}")
-    print(
-        f"    [+] Lead Time: {result['Lead Time']} | Supplier: {result['Supplier Type']}"
-    )
+    print(f"    [+] Lead Time: {result['Lead Time']} | Supplier: {result['Supplier Type']}")
     scan_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-    log_universal_csv(
-        [
-            "WHOLESALE_LEAD",
-            scan_time,
-            result["Supplier Type"],
-            "Wholesale Item",
-            "N/A",
-            "N/A",
-            "N/A",
-            result["Buy Cost"],
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            url,
-        ]
-    )
+    
+    # Wholesale Smart Padding (20-Columns)
+    log_universal_csv([
+        "WHOLESALE_LEAD", scan_time, result["Supplier Type"], "Wholesale Item", "N/A",
+        "N/A", "N/A", "N/A", result["Buy Cost"], "N/A", "N/A", "N/A",
+        "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", url,
+    ])
 
     if result["Buy Cost"] != "N/A":
         try:
@@ -286,186 +324,9 @@ def run_wholesale_scraper(url):
         except:
             pass
 
-
 # ==========================================
-# RETAIL CROSS-REFERENCE ENGINE (AMAZON)
+# RETAIL ENGINES (AMAZON / WALMART)
 # ==========================================
-def scrape_amazon(url):
-    print("    [*] Routing to Stealth Amazon Engine...")
-    try:
-        headers = {
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
-        response = requests.get(
-            url, impersonate="chrome120", headers=headers, timeout=15
-        )
-        soup = BeautifulSoup(response.text, "html.parser")
-        title = (
-            soup.find(id="productTitle").get_text(strip=True)
-            if soup.find(id="productTitle")
-            else "N/A"
-        )
-        price_whole = soup.find("span", {"class": "a-price-whole"})
-        price_fraction = soup.find("span", {"class": "a-price-fraction"})
-        price = (
-            f"${price_whole.get_text(strip=True)}{price_fraction.get_text(strip=True)}"
-            if price_whole and price_fraction
-            else "N/A"
-        )
-        img_elem = soup.find(id="landingImage")
-        img_url = img_elem["src"] if img_elem and "src" in img_elem.attrs else "N/A"
-
-        print(f"    [+] Item: {title[:50]}...")
-        print(f"    [+] Retail Price: {price}")
-
-        if title != "N/A":
-            clean_title = " ".join(title.split()[:5])
-            encoded = urllib.parse.quote(clean_title)
-            print("\n    --- Cross-Reference Links ---")
-            print(
-                f"    -> Alibaba: https://www.alibaba.com/trade/search?SearchText={encoded}"
-            )
-            print(f"    -> DHGate:  https://www.dhgate.com/w/{encoded}.html")
-            print(f"    -> Image:   {img_url}")
-
-        scan_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-        log_universal_csv(
-            [
-                "AMAZON_RETAIL",
-                scan_time,
-                "Amazon",
-                title[:97],
-                "N/A",
-                "N/A",
-                "N/A",
-                price,
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                url,
-                "N/A",
-            ]
-        )
-    except Exception as e:
-        print(f"[!] Amazon Scrape Failed: {e}")
-
-
-# ==========================================
-# LEGACY RAPID-API RETAIL ENGINE (WALMART/ETC)
-# ==========================================
-def load_cache():
-    if os.path.exists(CACHE_PATH):
-        try:
-            with open(CACHE_PATH, "r") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-
-def save_cache(cache_data):
-    with open(CACHE_PATH, "w") as f:
-        json.dump(cache_data, f, indent=4)
-
-
-def evaluate_lead(roi, margin, stars, sales_vol, weight_str):
-    try:
-        if roi < 30.0 or margin < 15.0:
-            return "FAIL"
-        if stars != "N/A" and float(stars) < 4.0:
-            return "FAIL"
-        weight_val = 999.0
-        w_match = re.search(r"(\d+(?:\.\d+)?)", str(weight_str))
-        if w_match:
-            weight_val = float(w_match.group(1))
-        if weight_val > 3.0 and weight_str != "N/A":
-            return "FAIL"
-        sales_num = 0
-        sv_str = str(sales_vol).upper()
-        if "K" in sv_str:
-            k_match = re.search(r"(\d+(?:\.\d+)?)K", sv_str)
-            if k_match:
-                sales_num = int(float(k_match.group(1)) * 1000)
-        else:
-            s_match = re.search(r"(\d+)", sv_str)
-            if s_match:
-                sales_num = int(s_match.group(1))
-        if sales_num < 50 and sales_vol != "Unknown":
-            return "FAIL"
-        return "WINNING_LEAD"
-    except:
-        return "MANUAL_CHECK"
-
-
-def check_rapid_api(upc):
-    if not RAPID_API_KEY:
-        return 0.0, 0.0, "N/A", 0, "N/A", "Unknown"
-    cache = load_cache()
-    if upc in cache:
-        print("    [*] Retrieved Amazon data from local cache (0 API tokens used).")
-        c = cache[upc]
-        return (
-            c["amazon_price"],
-            c["net_payout"],
-            c["amz_link"],
-            c["reviews"],
-            c["stars"],
-            c["sales_vol"],
-        )
-
-    url = "https://real-time-amazon-data.p.rapidapi.com/search"
-    querystring = {
-        "query": upc,
-        "page": "1",
-        "country": "US",
-        "sort_by": "RELEVANCE",
-        "product_condition": "NEW",
-    }
-    headers = {
-        "X-RapidAPI-Key": RAPID_API_KEY,
-        "X-RapidAPI-Host": "real-time-amazon-data.p.rapidapi.com",
-    }
-
-    try:
-        response = requests.get(url, headers=headers, params=querystring, timeout=15)
-        data = response.json()
-        if (
-            "data" in data
-            and "products" in data["data"]
-            and len(data["data"]["products"]) > 0
-        ):
-            product = data["data"]["products"][0]
-            price_str = product.get("product_price", "")
-            amz_link = product.get(
-                "product_url", f"https://www.amazon.com/dp/{product.get('asin', '')}"
-            )
-            reviews = product.get("product_num_ratings", 0)
-            stars = product.get("product_star_rating", "N/A")
-            sales_vol = product.get("sales_volume", "Unknown")
-            if price_str:
-                amazon_price = float(price_str.replace("$", "").replace(",", ""))
-                net_payout = amazon_price - (amazon_price * 0.15) - 5.50
-                cache[upc] = {
-                    "amazon_price": amazon_price,
-                    "net_payout": net_payout,
-                    "amz_link": amz_link,
-                    "reviews": reviews,
-                    "stars": stars,
-                    "sales_vol": sales_vol,
-                }
-                save_cache(cache)
-                return amazon_price, net_payout, amz_link, reviews, stars, sales_vol
-    except:
-        pass
-    return 0.0, 0.0, "N/A", 0, "N/A", "Unknown"
-
-
 def extract_upc_universally(html_code):
     soup = BeautifulSoup(html_code, "html.parser")
     for script in soup.find_all("script", type="application/ld+json"):
@@ -489,7 +350,6 @@ def extract_upc_universally(html_code):
         if match:
             return match.group(1)
     return "UNKNOWN"
-
 
 def extract_deep_data(html_code):
     soup = BeautifulSoup(html_code, "html.parser")
@@ -535,6 +395,51 @@ def extract_deep_data(html_code):
             continue
     return desc, category, weight
 
+def scrape_amazon(url):
+    print("    [*] Routing to Stealth Amazon Engine...")
+    try:
+        headers = {
+            "Accept-Language": "en-US,en;q=0.9",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        response = requests.get(
+            url, impersonate="chrome120", headers=headers, timeout=15
+        )
+        soup = BeautifulSoup(response.text, "html.parser")
+        title = (
+            soup.find(id="productTitle").get_text(strip=True)
+            if soup.find(id="productTitle")
+            else "N/A"
+        )
+        price_whole = soup.find("span", {"class": "a-price-whole"})
+        price_fraction = soup.find("span", {"class": "a-price-fraction"})
+        price = (
+            f"${price_whole.get_text(strip=True)}{price_fraction.get_text(strip=True)}"
+            if price_whole and price_fraction
+            else "N/A"
+        )
+        img_elem = soup.find(id="landingImage")
+        img_url = img_elem["src"] if img_elem and "src" in img_elem.attrs else "N/A"
+
+        print(f"    [+] Item: {title[:50]}...")
+        print(f"    [+] Retail Price: {price}")
+
+        if title != "N/A":
+            clean_title = " ".join(title.split()[:5])
+            encoded = urllib.parse.quote(clean_title)
+            print("\n    --- Cross-Reference Links ---")
+            print(f"    -> Alibaba: https://www.alibaba.com/trade/search?SearchText={encoded}")
+            print(f"    -> DHGate:  https://www.dhgate.com/w/{encoded}.html")
+            print(f"    -> Image:   {img_url}")
+
+        scan_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+        # Amazon Retail Smart Padding (20-Columns)
+        log_universal_csv([
+            "AMAZON_RETAIL", scan_time, "Amazon", title[:97], "N/A", "N/A", "N/A", "N/A",
+            "N/A", price, "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", url, "N/A",
+        ])
+    except Exception as e:
+        print(f"[!] Amazon Scrape Failed: {e}")
 
 def legacy_retail_scanner(url):
     print("    [*] Routing to Legacy Retail Scanner (Rapid-API)...")
@@ -603,88 +508,36 @@ def legacy_retail_scanner(url):
     print(f"    [+] Buy Cost: ${buy_cost} | UPC: {upc}")
 
     if upc != "UNKNOWN" and buy_cost > 0:
-        amz_price, payout, amz_link, reviews, stars, sales_vol = check_rapid_api(upc)
+        amz_price, amz_link, reviews, stars, sales_vol, bsr = check_rapid_api(upc)
         if amz_price > 0:
-            net_profit = payout - buy_cost
+            fba_fee = calculate_fba_fee(amz_price, weight, category)
+            net_profit = amz_price - buy_cost - fba_fee
             roi = (net_profit / buy_cost) * 100
             margin = (net_profit / amz_price) * 100
-            break_even = (buy_cost + 5.50) / 0.85
-            status = evaluate_lead(roi, margin, stars, sales_vol, weight)
-            log_universal_csv(
-                [
-                    status,
-                    scan_time,
-                    category,
-                    title,
-                    desc,
-                    weight,
-                    upc,
-                    f"${buy_cost}",
-                    f"${amz_price}",
-                    f"${net_profit:.2f}",
-                    f"{margin:.1f}%",
-                    f"{roi:.0f}%",
-                    f"${break_even:.2f}",
-                    sales_vol,
-                    reviews,
-                    stars,
-                    amz_link,
-                    url,
-                ]
-            )
-            print(f"    [+] Saved to CSV! Status: {status}")
+            break_even = (buy_cost + fba_fee)
+            status = "WINNING_LEAD" if roi >= 30.0 and margin >= 15.0 else "FAIL"
+            
+            log_universal_csv([
+                status, scan_time, category, title[:97], desc, weight, bsr, upc, 
+                f"${buy_cost}", f"${amz_price}", f"${fba_fee:.2f}", f"${net_profit:.2f}", 
+                f"{margin:.1f}%", f"{roi:.0f}%", f"${break_even:.2f}", sales_vol, 
+                reviews, stars, amz_link, url
+            ])
+            print(f"    [+] Saved to CSV! Status: {status} | FBA Fee: ${fba_fee:.2f}")
         else:
-            log_universal_csv(
-                [
-                    "NOT_FOUND",
-                    scan_time,
-                    category,
-                    title,
-                    desc,
-                    weight,
-                    upc,
-                    f"${buy_cost}",
-                    "Not Found",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    "N/A",
-                    url,
-                ]
-            )
+            log_universal_csv([
+                "NOT_FOUND", scan_time, category, title[:97], desc, weight, "N/A", upc, 
+                f"${buy_cost}", "Not Found", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", 
+                "N/A", "N/A", "N/A", url
+            ])
             print("    [-] UPC not found on Amazon. Logged to CSV.")
     else:
-        log_universal_csv(
-            [
-                "MISSING_UPC",
-                scan_time,
-                category,
-                title,
-                desc,
-                weight,
-                upc,
-                f"${buy_cost}",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                "N/A",
-                url,
-            ]
-        )
+        log_universal_csv([
+            "MISSING_UPC", scan_time, category, title[:97], desc, weight, "N/A", upc, 
+            f"${buy_cost}", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", "N/A", 
+            "N/A", "N/A", url
+        ])
         print("    [-] Missing UPC. Logged to CSV.")
-
-    pyautogui.hotkey("ctrl", "w")
-    time.sleep(0.5)
-
 
 # ==========================================
 # MASTER SMART ROUTER
@@ -703,14 +556,13 @@ def route_url(url):
     else:
         legacy_retail_scanner(url)
 
-
 # ==========================================
 # MASTER CLI UI
 # ==========================================
 def main_menu():
     while True:
         print("\n" + "=" * 50)
-        print("    ARBITRAGE MASTER SCANNER (RAPID-API + STEALTH)")
+        print("    ARBITRAGE MASTER SCANNER (MARKET INTEL V2)")
         print("=" * 50)
         print("1. Paste a single URL to scan instantly")
         print("2. Paste multiple URLs (creates a new list)")
@@ -756,19 +608,18 @@ def main_menu():
             print("\n[*] Booting Web UI in the background...")
             try:
                 subprocess.Popen(
-                    ["python", "web_ui.py"],
+                    [sys.executable, "web_ui.py"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                print("[+] Web UI is now running! Check your browser.")
-            except:
-                print("[!] Failed to launch Web UI.")
+                print("    [+] Dashboard is LIVE! CTRL+Click here to open: http://127.0.0.1:5000\n")
+            except Exception as e:
+                print(f"[!] Failed to launch Web UI: {e}")
         elif choice == "5":
             print("\n[*] Exiting terminal. Run your Git commands now!")
             sys.exit(0)
         else:
             print("\n[!] Invalid command.")
-
 
 if __name__ == "__main__":
     main_menu()
